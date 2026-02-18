@@ -1,0 +1,44 @@
+# Veteran AI Safety Layer
+# https://github.com/TheAIOldtimer/veteran-ai-safety-layer
+#
+# Core dependencies only.
+# Pin versions to match what this codebase was built and tested on.
+#
+# Install with:
+#   pip install -r requirements.txt
+
+# Web framework
+flask==2.3.2
+
+# OpenAI SDK — must be 1.x, not legacy 0.x
+# Usage: from openai import OpenAI
+openai>=1.3.0,<2.0.0
+
+# Firebase Admin SDK — Firestore backend
+firebase-admin==6.2.0
+
+# Encryption — replace stubs in micro_memory.py with Fernet in production
+# Usage: from cryptography.fernet import Fernet
+cryptography>=41.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+
+# ============================================================
+# Development and testing dependencies
+# Install with:
+#   pip install -r requirements.txt -r requirements-dev.txt
+# ============================================================
+```
+
+4. Commit message: `Add requirements.txt`
+5. Click **Commit changes**
+
+---
+
+Now create `requirements-dev.txt`:
+
+1. Click **Add file** → **Create new file**
+2. Type in the filename box:
+```
+requirements-dev.txt
