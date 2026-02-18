@@ -291,7 +291,9 @@ class MicroMemory:
                         break
 
             matches.sort(
-                key=lambda m: m.get("emotional_context", {}).get("emotional_intensity", 0),
+                key=lambda m: m.get("emotional_context", {}).get(
+                    "emotional_intensity", 0
+                ),
                 reverse=True
             )
 
@@ -340,3 +342,150 @@ class MicroMemory:
 
             if not doc.exists:
                 return False
+
+            memory = doc.to_dict()
+            new_importance = min(memory.get("importance", 5.0) + boost, 10.0)
+
+            doc_ref.update({
+                "importance": new_importance,
+                "last_updated": datetime.utcnow().isoformat()
+            })
+
+            logger.info(f"Boosted memory {memory_id} importance to {new_importance:.1f}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to boost importance: {e}")
+            return False
+
+    def mark_as_consolidated(self, memory_id: str) -> bool:
+        """Mark a micro memory as consolidated — eligible for cleanup."""
+        try:
+            self.collection_ref.document(memory_id).update({
+                "consolidated": True,
+                "consolidated_at": datetime.utcnow().isoformat()
+            })
+            logger.info(f"Marked micro memory {memory_id} as consolidated")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to mark as consolidated: {e}")
+            return False
+
+    # =========================================================================
+    # CLEANUP
+    # =========================================================================
+
+    def cleanup_old_memories(self, days_threshold: int = 60) -> int:
+        """
+        Delete old consolidated memories whose importance has decayed below minimum.
+
+        Args:
+            days_threshold: Only consider memories older than this many days
+
+        Returns:
+            Number of memories deleted
+        """
+        try:
+            cutoff_date = datetime.utcnow() - timedelta(days=days_threshold)
+
+            query = (
+                self.collection_ref
+                .where("created_at", "<", cutoff_date.isoformat())
+                .where("consolidated", "==", True)
+                .limit(100)
+            )
+
+            deleted_count = 0
+            batch = self.db.batch()
+
+            for doc in query.stream():
+                memory = doc.to_dict()
+                current_importance = self._calculate_decayed_importance(
+                    memory["importance"],
+                    memory["created_at"]
+                )
+
+                if current_importance < self.MIN_IMPORTANCE:
+                    batch.delete(doc.reference)
+                    deleted_count += 1
+
+            if deleted_count > 0:
+                batch.commit()
+                logger.info(f"Deleted {deleted_count} old micro memories")
+
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup old memories: {e}")
+            return 0
+
+    # =========================================================================
+    # UTILITIES
+    # =========================================================================
+
+    def _calculate_decayed_importance(
+        self,
+        initial_importance: float,
+        created_at_iso: str
+    ) -> float:
+        """
+        Exponential decay using half-life formula.
+
+        I(t) = I₀ × (0.5) ^ (t / t_half)
+        """
+        try:
+            created_at = datetime.fromisoformat(created_at_iso)
+            elapsed_days = (datetime.utcnow() - created_at).total_seconds() / 86400
+            decay_factor = math.pow(0.5, elapsed_days / self.HALF_LIFE_DAYS)
+            return max(initial_importance * decay_factor, 0.1)
+
+        except Exception as e:
+            logger.error(f"Failed to calculate decayed importance: {e}")
+            return initial_importance
+
+    def get_unconsolidated_count(self) -> int:
+        """Count memories ready for consolidation."""
+        try:
+            return len(list(
+                self.collection_ref.where("consolidated", "==", False).stream()
+            ))
+        except Exception as e:
+            logger.error(f"Failed to count unconsolidated memories: {e}")
+            return 0
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get statistics about stored micro memories."""
+        try:
+            total = consolidated = 0
+            topics_count: Dict[str, int] = {}
+            emotions_count: Dict[str, int] = {}
+
+            for doc in self.collection_ref.limit(1000).stream():
+                total += 1
+                memory = doc.to_dict()
+
+                if memory.get("consolidated", False):
+                    consolidated += 1
+
+                for topic in memory.get("topics", []):
+                    topics_count[topic] = topics_count.get(topic, 0) + 1
+
+                emotion = memory.get("emotional_context", {}).get(
+                    "primary_emotion", "neutral"
+                )
+                emotions_count[emotion] = emotions_count.get(emotion, 0) + 1
+
+            return {
+                "total_micro_memories": total,
+                "consolidated": consolidated,
+                "unconsolidated": total - consolidated,
+                "top_topics": sorted(
+                    topics_count.items(), key=lambda x: x[1], reverse=True
+                )[:10],
+                "emotion_distribution": emotions_count,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get micro memory stats: {e}")
+            return {}
